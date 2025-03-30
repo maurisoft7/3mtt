@@ -1,100 +1,119 @@
+:root {
+    --bg-color: #2d2d2d;
+    --display-color: #1e1e1e;
+    --button-color: #4e4e4e;
+    --operation-color: #ff9500;
+    --function-color: #a5a5a5;
+    --text-color: #ffffff;
+    --hover-color: #5e5e5e;
+}
+
 * {
-    box-sizing: border-box;
     margin: 0;
     padding: 0;
-    font-family: 'Arial', sans-serif;
+    box-sizing: border-box;
+    font-family: 'Roboto', sans-serif;
 }
 
 body {
-    background: #f4f4f4;
+    background: linear-gradient(135deg, #3a3a3a, #1a1a1a);
     display: flex;
     justify-content: center;
     align-items: center;
-    height: 100vh;
+    min-height: 100vh;
+    padding: 20px;
 }
 
 .calculator {
-    background: #333;
-    border-radius: 15px;
-    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
-    width: 320px;
+    width: 100%;
+    max-width: 400px;
+    background: var(--bg-color);
+    border-radius: 20px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     overflow: hidden;
 }
 
 .display {
-    background: #222;
-    color: white;
-    padding: 20px;
+    padding: 25px;
+    background: var(--display-color);
     text-align: right;
-    height: 100px;
+    min-height: 120px;
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
+    justify-content: flex-end;
 }
 
 .previous-operand {
     color: rgba(255, 255, 255, 0.7);
     font-size: 1.2rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    margin-bottom: 10px;
+    min-height: 24px;
+    word-wrap: break-word;
 }
 
 .current-operand {
-    color: white;
-    font-size: 2rem;
-    font-weight: bold;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    color: var(--text-color);
+    font-size: 2.5rem;
+    font-weight: 500;
+    word-wrap: break-word;
+}
+
+.buttons-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 2px;
+    padding: 10px;
+    background: var(--bg-color);
 }
 
 button {
     border: none;
-    color: white;
-    font-size: 1.5rem;
+    outline: none;
     padding: 20px;
+    font-size: 1.5rem;
     cursor: pointer;
-    transition: background 0.2s;
-    width: 80px;
-    height: 80px;
-    background: #4d4d4d;
+    transition: all 0.2s;
+    background: var(--button-color);
+    color: var(--text-color);
+    border-radius: 5px;
 }
 
 button:hover {
-    background: #5e5e5e;
+    background: var(--hover-color);
+    transform: translateY(-2px);
 }
 
 button:active {
-    background: #3d3d3d;
+    transform: translateY(0);
 }
 
-button[data-action="operation"] {
-    background: #ff9500;
+[data-action="operation"] {
+    background: var(--operation-color);
+    font-size: 1.7rem;
 }
 
-button[data-action="operation"]:hover {
-    background: #ffaa33;
-}
-
-button[data-action="operation"]:active {
-    background: #e68a00;
-}
-
-button[data-action="clear"],
-button[data-action="delete"] {
-    background: #a5a5a5;
-    color: black;
-}
-
-button[data-action="clear"]:hover,
-button[data-action="delete"]:hover {
-    background: #b5b5b5;
-}
-
-button[data-action="clear"]:active,
-button[data-action="delete"]:active {
-    background: #959595;
+[data-action="clear"],
+[data-action="delete"] {
+    background: var(--function-color);
+    color: #000;
 }
 
 .span-two {
-    width: 160px;
+    grid-column: span 2;
+}
+
+@media (max-width: 400px) {
+    button {
+        padding: 15px;
+        font-size: 1.3rem;
+    }
+    
+    .display {
+        padding: 15px;
+        min-height: 100px;
+    }
+    
+    .current-operand {
+        font-size: 2rem;
+    }
 }
