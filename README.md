@@ -15,3 +15,11 @@ Virtual box installed
 ubuntu
 <img width="1358" height="705" alt="image" src="https://github.com/user-attachments/assets/763419d8-c6dc-4fad-af19-27726f9b289c" />
 
+github
+<img width="1354" height="450" alt="image" src="https://github.com/user-attachments/assets/968ac0be-c76c-4299-906a-1a6b4a085f4e" />
+
+Visual studio code
+<img width="1223" height="729" alt="image" src="https://github.com/user-attachments/assets/0a18a304-cfa2-466f-9bea-caced69c9948" />
+
+
+sual
