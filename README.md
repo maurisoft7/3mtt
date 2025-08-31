@@ -12,3 +12,6 @@ AWS Account created
 Virtual box installed
 <img width="703" height="460" alt="image" src="https://github.com/user-attachments/assets/b98a162d-89e7-4e73-8956-80b954474f57" />
 
+ubuntu
+<img width="1358" height="705" alt="image" src="https://github.com/user-attachments/assets/763419d8-c6dc-4fad-af19-27726f9b289c" />
+
