@@ -1,0 +1,151 @@
+#!/bin/bash
+
+# =============================================
+# Linux Server Setup and Package Manager Script
+# Author: Maurice 
+# Description: This script provides server information and manages software packages
+# =============================================
+
+# Function to display welcome message
+display_welcome() {
+    echo "============================================="
+    echo "    Linux Server Setup and Package Manager"
+    echo "============================================="
+    echo "Script started at: $(date)"
+    echo "Current user: $(whoami)"
+    echo "Hostname: $(hostname)"
+    echo ""
+}
+
+# Function to display system information
+system_info() {
+    echo "=== SYSTEM INFORMATION ==="
+    echo "Operating System: $(lsb_release -d | cut -f2)"
+    echo "Kernel Version: $(uname -r)"
+    echo "System Uptime: $(uptime -p)"
+    echo "Memory Usage: $(free -h | grep Mem | awk '{print $3 "/" $2}')"
+    echo "Disk Usage: $(df -h / | grep / | awk '{print $3 "/" $2}')"
+    echo ""
+}
+
+# Function to create necessary directories
+create_directories() {
+    echo "=== CREATING DIRECTORY STRUCTURE ==="
+    local directories=("logs" "scripts" "backups" "temp")
+    
+    for dir in "${directories[@]}"; do
+        if [ ! -d "/home/ubuntu/$dir" ]; then
+            mkdir -p "/home/ubuntu/$dir"
+            echo "✓ Created directory: /home/ubuntu/$dir"
+        else
+            echo "✓ Directory already exists: /home/ubuntu/$dir"
+        fi
+    done
+    echo ""
+}
+
+# Function to update package lists
+update_packages() {
+    echo "=== UPDATING PACKAGE LISTS ==="
+    sudo apt-get update
+    if [ $? -eq 0 ]; then
+        echo "✓ Package lists updated successfully"
+    else
+        echo "✗ Failed to update package lists"
+    fi
+    echo ""
+}
+
+# Function to install packages
+install_packages() {
+    echo "=== INSTALLING ESSENTIAL PACKAGES ==="
+    local packages=("nginx" "htop" "tree" "git" "curl" "wget")
+    
+    for package in "${packages[@]}"; do
+        if ! dpkg -l | grep -q "^ii  $package "; then
+            echo "Installing $package..."
+            sudo apt-get install -y "$package"
+            if [ $? -eq 0 ]; then
+                echo "✓ $package installed successfully"
+            else
+                echo "✗ Failed to install $package"
+            fi
+        else
+            echo "✓ $package is already installed"
+        fi
+    done
+    echo ""
+}
+
+# Function to remove unused packages
+cleanup_packages() {
+    echo "=== CLEANING UP UNUSED PACKAGES ==="
+    sudo apt-get autoremove -y
+    sudo apt-get autoclean
+    echo "✓ System cleanup completed"
+    echo ""
+}
+
+# Function to display installed packages
+list_installed_packages() {
+    echo "=== RECENTLY INSTALLED PACKAGES ==="
+    dpkg --get-selections | grep -v deinstall | tail -10
+    echo ""
+}
+
+# Function to check service status
+check_services() {
+    echo "=== SERVICE STATUS ==="
+    local services=("nginx" "ssh" "ufw")
+    
+    for service in "${services[@]}"; do
+        if systemctl is-active --quiet "$service"; then
+            echo "✓ $service: ACTIVE"
+        else
+            echo "○ $service: INACTIVE"
+        fi
+    done
+    echo ""
+}
+
+# Function to display goodbye message
+display_goodbye() {
+    echo "=== SCRIPT EXECUTION COMPLETE ==="
+    echo "Completion time: $(date)"
+    echo "System is ready for use!"
+    echo "============================================="
+}
+
+# Function to create log entry
+create_log() {
+    local log_file="/home/ubuntu/logs/server_setup_$(date +%Y%m%d_%H%M%S).log"
+    echo "Script execution logged to: $log_file"
+    {
+        display_welcome
+        system_info
+        create_directories
+        update_packages
+        install_packages
+        cleanup_packages
+        list_installed_packages
+        check_services
+        display_goodbye
+    } | tee "$log_file"
+}
+
+# Main script execution
+main() {
+    display_welcome
+    system_info
+    create_directories
+    update_packages
+    install_packages
+    cleanup_packages
+    list_installed_packages
+    check_services
+    display_goodbye
+    create_log
+}
+
+# Execute main function
+main "$@"
