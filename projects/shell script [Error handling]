@@ -1,0 +1,365 @@
+#!/bin/bash
+
+# AWS S3 Bucket Management Script
+# This script demonstrates AWS S3 operations with robust error handling and control flow
+# Author: Maurice
+# Date: $(date +%Y-%m-%d)
+
+# Configuration variables
+SCRIPT_NAME="aws-s3-manager"
+LOG_FILE="/var/log/${SCRIPT_NAME}.log"
+AWS_CLI_PROFILE="default"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+# Color codes for output formatting
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Function to log messages with timestamp
+log_message() {
+    local level=$1
+    local message=$2
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "[${timestamp}] ${level}: ${message}" | tee -a "$LOG_FILE"
+}
+
+# Function to print colored output
+print_status() {
+    local color=$1
+    local message=$2
+    echo -e "${color}${message}${NC}"
+}
+
+# Function to check if AWS CLI is installed and configured
+check_aws_prerequisites() {
+    log_message "INFO" "Checking AWS CLI prerequisites..."
+    
+    # Check if AWS CLI is installed
+    if ! command -v aws &> /dev/null; then
+        log_message "ERROR" "AWS CLI is not installed. Please install it first."
+        return 1
+    fi
+    
+    # Check if AWS credentials are configured
+    if ! aws sts get-caller-identity --profile "$AWS_CLI_PROFILE" &> /dev/null; then
+        log_message "ERROR" "AWS credentials not configured or invalid."
+        return 1
+    fi
+    
+    log_message "INFO" "AWS CLI prerequisites check passed."
+    return 0
+}
+
+# Function to validate S3 bucket name
+validate_bucket_name() {
+    local bucket_name=$1
+    
+    # S3 bucket naming rules validation
+    if [[ -z "$bucket_name" ]]; then
+        log_message "ERROR" "Bucket name cannot be empty."
+        return 1
+    fi
+    
+    # Length validation (3-63 characters)
+    if [[ ${#bucket_name} -lt 3 || ${#bucket_name} -gt 63 ]]; then
+        log_message "ERROR" "Bucket name must be between 3 and 63 characters long."
+        return 1
+    fi
+    
+    # DNS-compliant name validation
+    if [[ ! "$bucket_name" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ ]]; then
+        log_message "ERROR" "Bucket name must be DNS-compliant."
+        return 1
+    fi
+    
+    # Cannot contain consecutive periods or dashes
+    if echo "$bucket_name" | grep -q '\.\.' || echo "$bucket_name" | grep -q '\-\-'; then
+        log_message "ERROR" "Bucket name cannot contain consecutive periods or dashes."
+        return 1
+    fi
+    
+    # Cannot be formatted as IP address
+    if [[ "$bucket_name" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        log_message "ERROR" "Bucket name cannot be formatted as an IP address."
+        return 1
+    fi
+    
+    log_message "INFO" "Bucket name validation passed for: $bucket_name"
+    return 0
+}
+
+# Function to check if bucket exists using head-bucket operation
+check_bucket_exists() {
+    local bucket_name=$1
+    local region=$2
+    
+    log_message "INFO" "Checking if bucket '$bucket_name' exists..."
+    
+    # Using aws s3api head-bucket as required by instructor
+    if aws s3api head-bucket --bucket "$bucket_name" --profile "$AWS_CLI_PROFILE" 2>/dev/null; then
+        log_message "INFO" "Bucket '$bucket_name' exists."
+        return 0
+    else
+        local error_code=$?
+        case $error_code in
+            254) # Bucket doesn't exist
+                log_message "INFO" "Bucket '$bucket_name' does not exist."
+                return 1
+                ;;
+            255) # Other errors (access denied, network issues, etc.)
+                log_message "ERROR" "Error checking bucket existence. AWS CLI error code: $error_code"
+                return 2
+                ;;
+            *)
+                log_message "ERROR" "Unexpected error checking bucket: $error_code"
+                return 2
+                ;;
+        esac
+    fi
+}
+
+# Function to create S3 bucket with comprehensive error handling
+create_s3_bucket() {
+    local bucket_name=$1
+    local region=$2
+    
+    log_message "INFO" "Attempting to create bucket: $bucket_name in region: $region"
+    
+    # Validate bucket name first
+    if ! validate_bucket_name "$bucket_name"; then
+        print_status "$RED" "Bucket name validation failed."
+        return 1
+    fi
+    
+    # Check if bucket already exists
+    if check_bucket_exists "$bucket_name" "$region"; then
+        print_status "$YELLOW" "Bucket '$bucket_name' already exists. Skipping creation."
+        return 0
+    elif [ $? -eq 2 ]; then
+        print_status "$RED" "Error checking bucket existence. Cannot proceed with creation."
+        return 1
+    fi
+    
+    # Determine bucket creation command based on region
+    local create_cmd
+    if [ "$region" = "us-east-1" ]; then
+        create_cmd="aws s3api create-bucket --bucket '$bucket_name' --profile '$AWS_CLI_PROFILE'"
+    else
+        create_cmd="aws s3api create-bucket --bucket '$bucket_name' --create-bucket-configuration LocationConstraint='$region' --profile '$AWS_CLI_PROFILE'"
+    fi
+    
+    # Execute bucket creation with error handling
+    log_message "INFO" "Executing: $create_cmd"
+    if eval "$create_cmd" 2>> "$LOG_FILE"; then
+        log_message "SUCCESS" "Bucket '$bucket_name' created successfully in region '$region'."
+        
+        # Wait for bucket to be fully created
+        sleep 5
+        
+        # Verify bucket creation
+        if check_bucket_exists "$bucket_name" "$region"; then
+            print_status "$GREEN" "Bucket creation verified successfully."
+            return 0
+        else
+            print_status "$YELLOW" "Bucket created but verification failed. It might take more time to propagate."
+            return 0
+        fi
+    else
+        local error_code=$?
+        case $error_code in
+            1)
+                log_message "ERROR" "Bucket creation failed - possible naming conflict or permissions issue."
+                ;;
+            255)
+                log_message "ERROR" "Network error or AWS service unavailable during bucket creation."
+                ;;
+            *)
+                log_message "ERROR" "Unknown error during bucket creation (exit code: $error_code)."
+                ;;
+        esac
+        print_status "$RED" "Failed to create bucket '$bucket_name'."
+        return 1
+    fi
+}
+
+# Function to apply bucket policies with error handling
+apply_bucket_policy() {
+    local bucket_name=$1
+    local policy_file=$2
+    
+    log_message "INFO" "Applying bucket policy to '$bucket_name' from file: $policy_file"
+    
+    if [ ! -f "$policy_file" ]; then
+        log_message "ERROR" "Policy file '$policy_file' not found."
+        return 1
+    fi
+    
+    if aws s3api put-bucket-policy --bucket "$bucket_name" --policy "file://$policy_file" --profile "$AWS_CLI_PROFILE" 2>> "$LOG_FILE"; then
+        log_message "SUCCESS" "Bucket policy applied successfully to '$bucket_name'."
+        return 0
+    else
+        log_message "ERROR" "Failed to apply bucket policy to '$bucket_name'."
+        return 1
+    fi
+}
+
+# Function to enable bucket versioning
+enable_bucket_versioning() {
+    local bucket_name=$1
+    
+    log_message "INFO" "Enabling versioning for bucket: $bucket_name"
+    
+    local versioning_config='{"Status":"Enabled"}'
+    
+    if aws s3api put-bucket-versioning --bucket "$bucket_name" --versioning-configuration "$versioning_config" --profile "$AWS_CLI_PROFILE" 2>> "$LOG_FILE"; then
+        log_message "SUCCESS" "Versioning enabled for bucket '$bucket_name'."
+        return 0
+    else
+        log_message "ERROR" "Failed to enable versioning for bucket '$bucket_name'."
+        return 1
+    fi
+}
+
+# Function to list all S3 buckets with error handling
+list_s3_buckets() {
+    log_message "INFO" "Listing all S3 buckets..."
+    
+    if aws s3api list-buckets --profile "$AWS_CLI_PROFILE" --query "Buckets[].Name" --output table 2>> "$LOG_FILE"; then
+        log_message "SUCCESS" "Bucket listing completed."
+        return 0
+    else
+        log_message "ERROR" "Failed to list S3 buckets."
+        return 1
+    fi
+}
+
+# Function to demonstrate control flow with multiple bucket operations
+demonstrate_control_flow() {
+    local base_bucket_name="demo-bucket-${TIMESTAMP}"
+    local regions=("us-east-1" "us-west-2" "eu-west-1")
+    local success_count=0
+    local total_operations=${#regions[@]}
+    
+    log_message "INFO" "Starting control flow demonstration with $total_operations bucket operations"
+    
+    # Using for loop for multiple bucket operations
+    for ((i=0; i<total_operations; i++)); do
+        local current_bucket="${base_bucket_name}-${i}"
+        local current_region="${regions[$i]}"
+        
+        print_status "$BLUE" "Operation $((i+1))/$total_operations: Creating bucket '$current_bucket' in '$current_region'"
+        
+        # Using if-else for conditional execution based on bucket creation success
+        if create_s3_bucket "$current_bucket" "$current_region"; then
+            ((success_count++))
+            
+            # Nested if for additional operations on successfully created buckets
+            if [ $i -eq 0 ]; then
+                print_status "$BLUE" "Applying additional configurations to first successful bucket..."
+                enable_bucket_versioning "$current_bucket"
+            fi
+        else
+            print_status "$YELLOW" "Bucket creation failed for '$current_bucket'. Continuing with next operation..."
+        fi
+        
+        # Simple delay to avoid rate limiting
+        sleep 2
+    done
+    
+    # Final summary using if-elif-else structure
+    if [ $success_count -eq $total_operations ]; then
+        print_status "$GREEN" "All $total_operations bucket operations completed successfully!"
+    elif [ $success_count -gt 0 ]; then
+        print_status "$YELLOW" "$success_count out of $total_operations operations completed successfully."
+    else
+        print_status "$RED" "All bucket operations failed. Please check the log file: $LOG_FILE"
+    fi
+    
+    log_message "INFO" "Control flow demonstration completed. Success rate: $success_count/$total_operations"
+}
+
+# Function to clean up demo resources
+cleanup_demo_resources() {
+    local base_bucket_name=$1
+    
+    log_message "INFO" "Starting cleanup of demo resources..."
+    
+    # Using for loop to iterate through potential demo buckets
+    for i in {0..2}; do
+        local bucket_name="${base_bucket_name}-${i}"
+        
+        if check_bucket_exists "$bucket_name" "us-east-1"; then
+            print_status "$YELLOW" "Deleting demo bucket: $bucket_name"
+            
+            # Empty bucket before deletion
+            if aws s3 rb "s3://$bucket_name" --force --profile "$AWS_CLI_PROFILE" 2>> "$LOG_FILE"; then
+                log_message "SUCCESS" "Demo bucket '$bucket_name' deleted successfully."
+            else
+                log_message "ERROR" "Failed to delete demo bucket '$bucket_name'."
+            fi
+        fi
+    done
+}
+
+# Main function with comprehensive error handling
+main() {
+    log_message "INFO" "Starting AWS S3 Bucket Management Script"
+    
+    # Check prerequisites
+    if ! check_aws_prerequisites; then
+        print_status "$RED" "Prerequisite check failed. Exiting script."
+        exit 1
+    fi
+    
+    # Demonstrate various control flow structures
+    demonstrate_control_flow
+    
+    # List all buckets to show current state
+    print_status "$BLUE" "Current S3 buckets:"
+    list_s3_buckets
+    
+    # Interactive section for manual bucket operations
+    print_status "$BLUE" "Would you like to create a custom bucket? (y/n)"
+    read -r response
+    
+    # Using case statement for interactive menu
+    case "$response" in
+        y|Y|yes|YES)
+            print_status "$BLUE" "Enter bucket name: "
+            read -r custom_bucket
+            print_status "$BLUE" "Enter region (default: us-east-1): "
+            read -r custom_region
+            custom_region=${custom_region:-us-east-1}
+            
+            create_s3_bucket "$custom_bucket" "$custom_region"
+            ;;
+        *)
+            print_status "$YELLOW" "Skipping custom bucket creation."
+            ;;
+    esac
+    
+    # Cleanup demonstration
+    print_status "$BLUE" "Would you like to cleanup demo resources? (y/n)"
+    read -r cleanup_response
+    
+    if [[ "$cleanup_response" =~ ^[Yy] ]]; then
+        cleanup_demo_resources "demo-bucket-${TIMESTAMP}"
+    fi
+    
+    log_message "INFO" "Script execution completed."
+    print_status "$GREEN" "Script finished. Check log file for details: $LOG_FILE"
+}
+
+# Error handling for the entire script
+trap 'log_message "ERROR" "Script interrupted by user"; exit 1' INT TERM
+
+# Execute main function with error checking
+if main; then
+    exit 0
+else
+    log_message "ERROR" "Script execution failed"
+    exit 1
+fi
