@@ -1,0 +1,65 @@
+#!/bin/bash
+# ========================================================
+# Automation Script - File, User, and Permission Management
+# Author: Maurice 
+# ========================================================
+
+echo "Starting automation script..."
+
+# -------------------------------
+# 1. File Management
+# -------------------------------
+echo "Creating a new directory and files..."
+mkdir -p /tmp/my_project
+touch /tmp/my_project/file1.txt
+touch /tmp/my_project/file2.txt
+
+echo "Listing created files:"
+ls -l /tmp/my_project
+
+# -------------------------------
+# 2. User Management
+# -------------------------------
+echo "Creating a new user..."
+sudo useradd -m studentuser
+if [ $? -eq 0 ]; then
+    echo "User 'studentuser' created successfully."
+else
+    echo "Failed to create user."
+fi
+
+# -------------------------------
+# 3. Permissions Management
+# -------------------------------
+echo "Setting permissions on project directory..."
+sudo chown -R studentuser:studentuser /tmp/my_project
+sudo chmod 750 /tmp/my_project
+
+if [ $? -eq 0 ]; then
+    echo "Permissions updated successfully."
+else
+    echo "Failed to update permissions."
+fi
+
+# -------------------------------
+# 4. Validation & Logging
+# -------------------------------
+echo "Validating execution..."
+if [ -d "/tmp/my_project" ] && [ -f "/tmp/my_project/file1.txt" ]; then
+    echo "Files and directory exist."
+else
+    echo "File or directory creation failed."
+fi
+
+id studentuser >/dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "User 'studentuser' exists."
+else
+    echo "User validation failed."
+fi
+
+# -------------------------------
+# End of Script
+# -------------------------------
+echo "Automation script completed!"
+exit 0
