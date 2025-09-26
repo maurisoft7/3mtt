@@ -1,0 +1,485 @@
+#!/bin/bash
+
+# AWS IAM Management Script
+# Creates IAM policies, users, and groups as per instructor requirements
+# Author: [Your Name]
+# Date: $(date +%Y-%m-%d)
+
+# Configuration
+SCRIPT_NAME="aws-iam-management"
+LOG_FILE="/var/log/${SCRIPT_NAME}.log"
+IAM_DIR="$HOME/aws-iam-setup"
+POLICY_DIR="$IAM_DIR/policies"
+
+# IAM Configuration
+IAM_GROUP="Development-Team"
+IAM_USER="Eric"
+POLICY_NAME="Development-Policy"
+
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Create IAM directory
+mkdir -p "$POLICY_DIR"
+
+log_message() {
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+print_status() {
+    echo -e "${1}${2}${NC}" | tee -a "$LOG_FILE"
+}
+
+# Function to check AWS CLI and dependencies
+check_dependencies() {
+    print_status "$BLUE" "Checking dependencies..."
+    
+    local missing_deps=()
+    
+    # Check AWS CLI
+    if ! command -v aws &> /dev/null; then
+        print_status "$RED" "✗ AWS CLI not installed"
+        missing_deps+=("aws-cli")
+    else
+        local aws_version=$(aws --version 2>/dev/null | head -n1)
+        print_status "$GREEN" "✓ AWS CLI: $aws_version"
+    fi
+    
+    # Check jq
+    if ! command -v jq &> /dev/null; then
+        print_status "$RED" "✗ jq not installed"
+        missing_deps+=("jq")
+    else
+        print_status "$GREEN" "✓ jq installed"
+    fi
+    
+    # Check if AWS credentials are configured
+    if ! aws sts get-caller-identity &> /dev/null; then
+        print_status "$RED" "✗ AWS credentials not configured or invalid"
+        missing_deps+=("aws-credentials")
+    else
+        local caller_identity=$(aws sts get-caller-identity --output json)
+        local account_id=$(echo "$caller_identity" | jq -r '.Account')
+        print_status "$GREEN" "✓ AWS credentials valid (Account: $account_id)"
+    fi
+    
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        print_status "$RED" "Missing dependencies: ${missing_deps[*]}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to create IAM policy
+create_iam_policy() {
+    print_status "$BLUE" "Creating IAM policy: $POLICY_NAME"
+    
+    local policy_file="$POLICY_DIR/development-policy.json"
+    
+    # Create comprehensive development policy
+    cat > "$policy_file" << 'EOF'
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "EC2FullAccess",
+            "Effect": "Allow",
+            "Action": "ec2:*",
+            "Resource": "*"
+        },
+        {
+            "Sid": "S3ReadOnlyAccess",
+            "Effect": "Allow",
+            "Action": [
+                "s3:Get*",
+                "s3:List*"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "CloudWatchAccess",
+            "Effect": "Allow",
+            "Action": [
+                "cloudwatch:Describe*",
+                "cloudwatch:Get*",
+                "cloudwatch:List*"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "DenyIAMModification",
+            "Effect": "Deny",
+            "Action": [
+                "iam:DeleteUser",
+                "iam:DeleteGroup",
+                "iam:DeletePolicy",
+                "iam:AttachGroupPolicy",
+                "iam:DetachGroupPolicy"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+EOF
+
+    # Create the policy in AWS
+    if aws iam create-policy \
+        --policy-name "$POLICY_NAME" \
+        --policy-document "file://$policy_file" \
+        --description "Development team policy with EC2, S3, and CloudWatch access" >> "$LOG_FILE" 2>&1; then
+        
+        print_status "$GREEN" "✓ IAM policy created successfully: $POLICY_NAME"
+        
+        # Get policy ARN for documentation
+        local policy_arn=$(aws iam list-policies --query "Policies[?PolicyName=='$POLICY_NAME'].Arn" --output text)
+        echo "Policy ARN: $policy_arn" | tee -a "$LOG_FILE"
+        
+        return 0
+    else
+        print_status "$RED" "✗ Failed to create IAM policy"
+        return 1
+    fi
+}
+
+# Function to create IAM group
+create_iam_group() {
+    print_status "$BLUE" "Creating IAM group: $IAM_GROUP"
+    
+    if aws iam create-group --group-name "$IAM_GROUP" >> "$LOG_FILE" 2>&1; then
+        print_status "$GREEN" "✓ IAM group created successfully: $IAM_GROUP"
+        return 0
+    else
+        print_status "$YELLOW" "⚠ IAM group may already exist, continuing..."
+        return 0
+    fi
+}
+
+# Function to attach policy to group
+attach_policy_to_group() {
+    print_status "$BLUE" "Attaching policy to group: $POLICY_NAME -> $IAM_GROUP"
+    
+    local policy_arn=$(aws iam list-policies --query "Policies[?PolicyName=='$POLICY_NAME'].Arn" --output text)
+    
+    if [ -z "$policy_arn" ]; then
+        print_status "$RED" "✗ Policy ARN not found for: $POLICY_NAME"
+        return 1
+    fi
+    
+    if aws iam attach-group-policy \
+        --group-name "$IAM_GROUP" \
+        --policy-arn "$policy_arn" >> "$LOG_FILE" 2>&1; then
+        
+        print_status "$GREEN" "✓ Policy attached to group successfully"
+        return 0
+    else
+        print_status "$RED" "✗ Failed to attach policy to group"
+        return 1
+    fi
+}
+
+# Function to create IAM user
+create_iam_user() {
+    print_status "$BLUE" "Creating IAM user: $IAM_USER"
+    
+    if aws iam create-user --user-name "$IAM_USER" >> "$LOG_FILE" 2>&1; then
+        print_status "$GREEN" "✓ IAM user created successfully: $IAM_USER"
+        return 0
+    else
+        print_status "$YELLOW" "⚠ IAM user may already exist, continuing..."
+        return 0
+    fi
+}
+
+# Function to add user to group
+add_user_to_group() {
+    print_status "$BLUE" "Adding user to group: $IAM_USER -> $IAM_GROUP"
+    
+    if aws iam add-user-to-group \
+        --user-name "$IAM_USER" \
+        --group-name "$IAM_GROUP" >> "$LOG_FILE" 2>&1; then
+        
+        print_status "$GREEN" "✓ User added to group successfully"
+        return 0
+    else
+        print_status "$RED" "✗ Failed to add user to group"
+        return 1
+    fi
+}
+
+# Function to create login profile for user
+create_user_login_profile() {
+    print_status "$BLUE" "Creating login profile for user: $IAM_USER"
+    
+    # Generate a temporary password
+    local temp_password=$(openssl rand -base64 12)
+    
+    if aws iam create-login-profile \
+        --user-name "$IAM_USER" \
+        --password "$temp_password" \
+        --password-reset-required >> "$LOG_FILE" 2>&1; then
+        
+        print_status "$GREEN" "✓ Login profile created successfully"
+        
+        # Store password securely (in real scenario, use AWS Secrets Manager)
+        echo "Temporary password for $IAM_USER: $temp_password" > "$IAM_DIR/user-credentials.txt"
+        chmod 600 "$IAM_DIR/user-credentials.txt"
+        
+        print_status "$YELLOW" "⚠ Temporary password saved to: $IAM_DIR/user-credentials.txt"
+        print_status "$YELLOW" "⚠ User must reset password on first login"
+        
+        return 0
+    else
+        print_status "$YELLOW" "⚠ Login profile may already exist, continuing..."
+        return 0
+    fi
+}
+
+# Function to create access keys for programmatic access
+create_access_keys() {
+    print_status "$BLUE" "Creating access keys for user: $IAM_USER"
+    
+    if aws iam create-access-key --user-name "$IAM_USER" > "$IAM_DIR/access-keys.json" 2>> "$LOG_FILE"; then
+        print_status "$GREEN" "✓ Access keys created successfully"
+        
+        # Extract and display access key information
+        local access_key_id=$(jq -r '.AccessKey.AccessKeyId' "$IAM_DIR/access-keys.json")
+        local secret_access_key=$(jq -r '.AccessKey.SecretAccessKey' "$IAM_DIR/access-keys.json")
+        
+        echo "Access Key ID: $access_key_id" >> "$IAM_DIR/user-credentials.txt"
+        echo "Secret Access Key: $secret_access_key" >> "$IAM_DIR/user-credentials.txt"
+        
+        print_status "$YELLOW" "⚠ Access keys saved to: $IAM_DIR/user-credentials.txt"
+        print_status "$RED" "⚠ SECURITY WARNING: Store these credentials securely!"
+        
+        return 0
+    else
+        print_status "$YELLOW" "⚠ Access keys may already exist, continuing..."
+        return 0
+    fi
+}
+
+# Function to verify IAM setup
+verify_iam_setup() {
+    print_status "$BLUE" "Verifying IAM setup..."
+    
+    local verification_passed=true
+    
+    # Verify group exists
+    if aws iam get-group --group-name "$IAM_GROUP" &> /dev/null; then
+        print_status "$GREEN" "✓ Group verification passed: $IAM_GROUP"
+    else
+        print_status "$RED" "✗ Group verification failed: $IAM_GROUP"
+        verification_passed=false
+    fi
+    
+    # Verify user exists
+    if aws iam get-user --user-name "$IAM_USER" &> /dev/null; then
+        print_status "$GREEN" "✓ User verification passed: $IAM_USER"
+    else
+        print_status "$RED" "✗ User verification failed: $IAM_USER"
+        verification_passed=false
+    fi
+    
+    # Verify user is in group
+    if aws iam list-groups-for-user --user-name "$IAM_USER" | grep -q "$IAM_GROUP"; then
+        print_status "$GREEN" "✓ User-group membership verified"
+    else
+        print_status "$RED" "✗ User-group membership verification failed"
+        verification_passed=false
+    fi
+    
+    # Verify policy is attached to group
+    local policy_arn=$(aws iam list-policies --query "Policies[?PolicyName=='$POLICY_NAME'].Arn" --output text)
+    if aws iam list-attached-group-policies --group-name "$IAM_GROUP" | grep -q "$policy_arn"; then
+        print_status "$GREEN" "✓ Policy attachment verified"
+    else
+        print_status "$RED" "✗ Policy attachment verification failed"
+        verification_passed=false
+    fi
+    
+    if [ "$verification_passed" = true ]; then
+        print_status "$GREEN" "✓ All IAM verifications passed"
+        return 0
+    else
+        print_status "$RED" "✗ Some IAM verifications failed"
+        return 1
+    fi
+}
+
+# Function to generate comprehensive documentation
+generate_documentation() {
+    print_status "$BLUE" "Generating IAM setup documentation..."
+    
+    local policy_arn=$(aws iam list-policies --query "Policies[?PolicyName=='$POLICY_NAME'].Arn" --output text)
+    local account_id=$(aws sts get-caller-identity --query Account --output text)
+    
+    cat > "$IAM_DIR/iam-setup-report.md" << EOF
+# AWS IAM Setup Report
+## Generated on: $(date)
+
+### IAM Resources Created
+
+#### 1. IAM Policy
+- **Policy Name**: $POLICY_NAME
+- **Policy ARN**: $policy_arn
+- **Description**: Development team policy with EC2, S3, and CloudWatch access
+- **Permissions**:
+  - Full EC2 access
+  - S3 read-only access
+  - CloudWatch read access
+  - IAM modification restrictions
+
+#### 2. IAM Group
+- **Group Name**: $IAM_GROUP
+- **Attached Policies**: $POLICY_NAME
+
+#### 3. IAM User
+- **User Name**: $IAM_USER
+- **Groups**: $IAM_GROUP
+- **Login Profile**: Created (password reset required)
+- **Access Keys**: Generated for programmatic access
+
+### AWS Account Information
+- **Account ID**: $account_id
+- **Region**: $(aws configure get region)
+- **Setup Completed**: $(date)
+
+### Security Notes
+- Temporary password requires reset on first login
+- Access keys should be stored securely
+- Policy includes deny rules for IAM modification for safety
+- Regular rotation of access keys recommended
+
+### Next Steps
+1. Provide credentials to the user securely
+2. User must reset password on first login
+3. Test permissions with sample AWS operations
+4. Set up CloudTrail for auditing
+
+### Verification Checklist
+- [ ] IAM policy created and attached
+- [ ] IAM group created
+- [ ] IAM user created and added to group
+- [ ] Login profile configured
+- [ ] Access keys generated
+- [ ] All components verified
+
+EOF
+
+    print_status "$GREEN" "✓ Documentation generated: $IAM_DIR/iam-setup-report.md"
+}
+
+# Function to create cleanup script (for testing purposes)
+create_cleanup_script() {
+    cat > "$IAM_DIR/cleanup-iam.sh" << 'EOF'
+#!/bin/bash
+# Cleanup script for IAM resources (use with caution)
+
+IAM_USER="Eric"
+IAM_GROUP="Development-Team"
+POLICY_NAME="Development-Policy"
+
+echo "WARNING: This will delete IAM resources!"
+read -p "Are you sure? (yes/no): " confirmation
+
+if [ "$confirmation" != "yes" ]; then
+    echo "Cleanup cancelled"
+    exit 1
+fi
+
+# Remove user from group
+aws iam remove-user-from-group --user-name "$IAM_USER" --group-name "$IAM_GROUP"
+
+# Delete login profile
+aws iam delete-login-profile --user-name "$IAM_USER"
+
+# List and delete access keys
+aws iam list-access-keys --user-name "$IAM_USER" --query 'AccessKeyMetadata[].AccessKeyId' --output text | while read key; do
+    aws iam delete-access-key --user-name "$IAM_USER" --access-key-id "$key"
+done
+
+# Delete user
+aws iam delete-user --user-name "$IAM_USER"
+
+# Detach policy from group
+POLICY_ARN=$(aws iam list-policies --query "Policies[?PolicyName=='$POLICY_NAME'].Arn" --output text)
+aws iam detach-group-policy --group-name "$IAM_GROUP" --policy-arn "$POLICY_ARN"
+
+# Delete group
+aws iam delete-group --group-name "$IAM_GROUP"
+
+# Delete policy
+aws iam delete-policy --policy-arn "$POLICY_ARN"
+
+echo "IAM resources cleaned up"
+EOF
+
+    chmod +x "$IAM_DIR/cleanup-iam.sh"
+    print_status "$YELLOW" "⚠ Cleanup script created: $IAM_DIR/cleanup-iam.sh"
+}
+
+# Main execution function
+main() {
+    print_status "$BLUE" "Starting AWS IAM Management Script"
+    echo "Log File: $LOG_FILE"
+    echo "Output Directory: $IAM_DIR"
+    echo
+    
+    # Check dependencies
+    if ! check_dependencies; then
+        print_status "$RED" "Dependency check failed. Exiting."
+        exit 1
+    fi
+    
+    # Execute IAM setup steps
+    local steps=(
+        "create_iam_policy"
+        "create_iam_group" 
+        "attach_policy_to_group"
+        "create_iam_user"
+        "add_user_to_group"
+        "create_user_login_profile"
+        "create_access_keys"
+        "verify_iam_setup"
+        "generate_documentation"
+        "create_cleanup_script"
+    )
+    
+    local successful_steps=0
+    local total_steps=${#steps[@]}
+    
+    for step in "${steps[@]}"; do
+        if $step; then
+            ((successful_steps++))
+        else
+            print_status "$YELLOW" "Step $step had issues, but continuing..."
+        fi
+        echo
+    done
+    
+    # Final summary
+    print_status "$GREEN" "=== IAM SETUP COMPLETED ==="
+    echo "Successful steps: $successful_steps/$total_steps"
+    echo "Resources created:"
+    echo "  - IAM Policy: $POLICY_NAME"
+    echo "  - IAM Group: $IAM_GROUP" 
+    echo "  - IAM User: $IAM_USER"
+    echo
+    echo "Generated files:"
+    ls -la "$IAM_DIR/"
+    echo
+    print_status "$BLUE" "Next: Provide credentials from $IAM_DIR/user-credentials.txt to the user"
+}
+
+# Error handling
+trap 'print_status "$RED" "Script interrupted"; exit 1' INT TERM
+
+# Execute main function
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
